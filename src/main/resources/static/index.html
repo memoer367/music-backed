@@ -60,6 +60,51 @@
         .song-title { font-size: 22px; color: #31c27c; font-weight: bold; margin-bottom: 5px;}
         .song-artist { color: #aaa; font-size: 16px;}
 
+        /* 播放控制区（进度条 + 播放/暂停） */
+        .player-controls { margin-top: 18px; }
+        .progress-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .time {
+            font-size: 12px;
+            color: #aaa;
+            min-width: 36px;
+            text-align: center;
+        }
+        .progress-bar {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: #444;
+            outline: none;
+            cursor: pointer;
+        }
+        .progress-bar::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #31c27c;
+            cursor: pointer;
+        }
+        .progress-bar::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #31c27c;
+            cursor: pointer;
+            border: none;
+        }
+        .play-btn {
+            margin-top: 12px;
+            padding: 9px 32px;
+        }
+
         /* 右侧歌单 */
         .right-panel {
             flex: 1;
@@ -87,15 +132,6 @@
         }
         .song-item .artist { font-size: 12px; opacity: 0.8; }
 
-        /* 底部控制区 */
-        .controls {
-            position: absolute;
-            bottom: 20px;
-            right: 30px;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
         button {
             padding: 10px 25px;
             background: #31c27c;
@@ -121,12 +157,24 @@
             <div class="song-title">{{ currentSong.songName || '请选择歌曲' }}</div>
             <div class="song-artist">{{ currentSong.artistName || '未知歌手' }}</div>
         </div>
+
+        <!-- 播放控制：进度条 + 播放/暂停按钮 -->
+        <div class="player-controls">
+            <div class="progress-row">
+                <span class="time">{{ formatTime(currentTime) }}</span>
+                <input type="range" class="progress-bar" min="0" :max="duration" step="0.1"
+                       :value="currentTime" @input="seek">
+                <span class="time">{{ formatTime(duration) }}</span>
+            </div>
+            <button class="play-btn" @click="togglePlay">
+                {{ isPlaying ? '⏸ 暂停' : '▶ 播放' }}
+            </button>
+        </div>
     </div>
 
     <!-- 右侧歌单区 -->
     <div class="right-panel">
         <h2>🎵 我的最爱歌单</h2>
-        <!-- 如果数据还没加载出来，显示提示 -->
         <div v-if="songList.length === 0" style="color: #888; text-align: center; margin-top: 50px;">
             正在加载数据或暂无歌曲...
         </div>
@@ -138,12 +186,30 @@
         </div>
     </div>
 
+    <!-- 评论区 -->
+    <div class="comment-section" v-if="currentSong.songId" style="margin-top: 20px; border-top: 1px solid #444; padding-top: 10px;">
+        <h3 style="font-size: 16px;">💬 评论区</h3>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <input v-model="newComment" placeholder="说点什么吧..." style="flex: 1; padding: 8px; border-radius: 5px; border: none;">
+            <button @click="submitComment" style="padding: 5px 15px;">发送</button>
+        </div>
+
+        <div v-for="(c, index) in comments" :key="index" style="margin-bottom: 10px; font-size: 14px;">
+            <span style="color: #31c27c;">{{ c.username }}: </span>
+            <span>{{ c.content }}</span>
+            <div style="font-size: 12px; color: #888;">{{ c.create_time }}</div>
+        </div>
+    </div>
+
     <!-- 隐藏的audio标签 -->
-    <audio ref="audioPlayer" @ended="nextSong"></audio>
+    <audio ref="audioPlayer" @ended="nextSong"
+           @timeupdate="onTimeUpdate" @loadedmetadata="onLoadedMetadata"
+           @play="onPlay" @pause="onPause"></audio>
 </div>
 
 <script>
-    const { createApp, ref, onMounted, computed } = Vue;
+    const { createApp, ref, onMounted, nextTick } = Vue;
 
     createApp({
         setup() {
@@ -151,16 +217,83 @@
             const currentSong = ref({});
             const isPlaying = ref(false);
             const audioPlayer = ref(null);
+            const currentTime = ref(0);   // 当前播放进度（秒）
+            const duration = ref(0);      // 歌曲总时长（秒）
 
-            // 页面加载时，向后端请求歌单数据
+            // ===== 评论区状态 =====
+            const comments = ref([]);
+            const newComment = ref('');
+
+            // 获取某首歌的评论
+            const fetchComments = (songId) => {
+                if (!songId) { comments.value = []; return; }
+                axios.get(`/api/comment/${songId}`)
+                    .then(res => { comments.value = res.data; })
+                    .catch(err => console.error("获取评论失败:", err));
+            };
+
+            // 提交评论（后端现在返回 {code, msg}）
+            const submitComment = () => {
+                if (!newComment.value.trim()) return;
+                const data = {
+                    songId: currentSong.value.songId,
+                    userId: 1,
+                    content: newComment.value
+                };
+                axios.post('/api/comment/add', data).then(res => {
+                    alert(res.data.msg);
+                    newComment.value = '';
+                    fetchComments(currentSong.value.songId);
+                });
+            };
+
+            // 秒 -> mm:ss
+            const formatTime = (seconds) => {
+                if (!seconds || isNaN(seconds)) return '00:00';
+                const m = Math.floor(seconds / 60);
+                const s = Math.floor(seconds % 60);
+                return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+            };
+
+            // ===== 播放 / 暂停 =====
+            const togglePlay = () => {
+                const audio = audioPlayer.value;
+                if (!currentSong.value.songId || !audio) return;
+                if (audio.paused) {
+                    // 第一次点播放时还没有音频源，先补上
+                    if (!audio.src) audio.src = currentSong.value.audioUrl;
+                    audio.play().catch(e => console.log("播放失败", e));
+                } else {
+                    audio.pause();
+                }
+            };
+
+            // ===== 进度条 =====
+            const onTimeUpdate = () => {
+                if (audioPlayer.value) currentTime.value = audioPlayer.value.currentTime;
+            };
+            const onLoadedMetadata = () => {
+                if (audioPlayer.value) duration.value = audioPlayer.value.duration || 0;
+            };
+            const seek = (event) => {
+                const time = Number(event.target.value);
+                if (audioPlayer.value) {
+                    audioPlayer.value.currentTime = time;
+                    currentTime.value = time;
+                }
+            };
+            // 用原生 play/pause 事件同步状态，保证暂停/自动切歌时按钮和封面动画都正确
+            const onPlay = () => { isPlaying.value = true; };
+            const onPause = () => { isPlaying.value = false; };
+
+            // 页面加载时请求歌单
             onMounted(() => {
-                // 注意：这里使用的是相对路径，Spring Boot会自动识别
                 axios.get('/api/playlist/1')
                     .then(res => {
                         songList.value = res.data;
-                        // 自动选中第一首歌，但默认不播放
-                        if(songList.value.length > 0) {
+                        if (songList.value.length > 0) {
                             currentSong.value = songList.value[0];
+                            fetchComments(currentSong.value.songId);
                         }
                     })
                     .catch(err => {
@@ -169,27 +302,35 @@
                     });
             });
 
-            // 点击播放
+            // 点击某首歌播放
             const playSong = (song) => {
                 currentSong.value = song;
-                isPlaying.value = true;
-                // 等待DOM更新后设置音频源并播放
-                setTimeout(() => {
-                    audioPlayer.value.src = song.audioUrl;
-                    audioPlayer.value.play().catch(e => console.log("播放被拦截或链接失效", e));
-                }, 50);
+                fetchComments(song.songId);
+                nextTick(() => {
+                    const audio = audioPlayer.value;
+                    audio.src = song.audioUrl;
+                    audio.currentTime = 0;
+                    audio.play().catch(e => console.log("播放被拦截或链接失效", e));
+                });
             };
 
-            // 自动下一首 (简化版)
+            // 自动下一首
             const nextSong = () => {
-                if(songList.value.length > 0) {
+                if (songList.value.length > 0) {
                     let currentIndex = songList.value.findIndex(s => s.songId === currentSong.value.songId);
                     let nextIndex = (currentIndex + 1) % songList.value.length;
                     playSong(songList.value[nextIndex]);
                 }
             };
 
-            return { songList, currentSong, isPlaying, playSong, nextSong, audioPlayer };
+            return {
+                songList, currentSong, isPlaying, audioPlayer,
+                currentTime, duration,
+                comments, newComment, fetchComments, submitComment,
+                formatTime, togglePlay, seek,
+                onTimeUpdate, onLoadedMetadata, onPlay, onPause,
+                playSong, nextSong
+            };
         }
     }).mount('#app');
 </script>

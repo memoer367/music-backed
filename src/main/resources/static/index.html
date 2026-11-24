@@ -158,7 +158,7 @@
             <div class="song-artist">{{ currentSong.artistName || '未知歌手' }}</div>
         </div>
 
-        <!-- 播放控制：进度条 + 播放/暂停按钮 -->
+        <!-- 播放控制：进度条 + 播放/暂停 + 收藏按钮 -->
         <div class="player-controls">
             <div class="progress-row">
                 <span class="time">{{ formatTime(currentTime) }}</span>
@@ -166,9 +166,14 @@
                        :value="currentTime" @input="seek">
                 <span class="time">{{ formatTime(duration) }}</span>
             </div>
-            <button class="play-btn" @click="togglePlay">
-                {{ isPlaying ? '⏸ 暂停' : '▶ 播放' }}
-            </button>
+            <div style="display:flex; gap:12px; justify-content:center; margin-top:12px;">
+                <button class="play-btn" style="margin-top:0;" @click="togglePlay">
+                    {{ isPlaying ? '⏸ 暂停' : '▶ 播放' }}
+                </button>
+                <button class="play-btn" style="margin-top:0; background:#ff5c5c;" @click="addFavorite">
+                    ❤ 收藏
+                </button>
+            </div>
         </div>
     </div>
 
@@ -268,6 +273,14 @@
                 }
             };
 
+            // ===== 收藏当前歌曲 =====
+            const addFavorite = () => {
+                if (!currentSong.value.songId) { alert("请先选择一首歌"); return; }
+                axios.post('/api/favorite/add', { userId: 1, songId: currentSong.value.songId })
+                    .then(res => alert(res.data.msg))
+                    .catch(err => console.error("收藏失败:", err));
+            };
+
             // ===== 进度条 =====
             const onTimeUpdate = () => {
                 if (audioPlayer.value) currentTime.value = audioPlayer.value.currentTime;
@@ -283,7 +296,17 @@
                 }
             };
             // 用原生 play/pause 事件同步状态，保证暂停/自动切歌时按钮和封面动画都正确
-            const onPlay = () => { isPlaying.value = true; };
+            // 记录播放历史：同一首歌只记一次（暂停后继续播不算新一次）
+            let lastRecordedSongId = null;
+            const onPlay = () => {
+                isPlaying.value = true;
+                const songId = currentSong.value.songId;
+                if (songId && songId !== lastRecordedSongId) {
+                    lastRecordedSongId = songId;
+                    axios.post('/api/history/add', { userId: 1, songId: songId })
+                        .catch(err => console.error("记录播放历史失败:", err));
+                }
+            };
             const onPause = () => { isPlaying.value = false; };
 
             // 页面加载时请求歌单
@@ -329,7 +352,7 @@
                 comments, newComment, fetchComments, submitComment,
                 formatTime, togglePlay, seek,
                 onTimeUpdate, onLoadedMetadata, onPlay, onPause,
-                playSong, nextSong
+                playSong, nextSong, addFavorite
             };
         }
     }).mount('#app');

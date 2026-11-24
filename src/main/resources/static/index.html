@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>仿QQ音乐播放器</title>
+    <!-- 引入 Vue3 和 Axios -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        body {
+            background: #1e1e1e;
+            color: #fff;
+            font-family: 'Microsoft YaHei', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .player {
+            width: 850px;
+            background: #2c2c2c;
+            border-radius: 20px;
+            display: flex;
+            padding: 30px;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+            position: relative;
+        }
+        /* 左侧封面 */
+        .left-panel {
+            width: 350px;
+            text-align: center;
+            border-right: 1px solid #444;
+            padding-right: 30px;
+        }
+        .cover-container {
+            width: 250px;
+            height: 250px;
+            margin: 0 auto;
+            border-radius: 50%;
+            background: #111; /* 模拟黑胶唱片底色 */
+            padding: 10px;
+            box-shadow: 0 0 20px rgba(49, 194, 124, 0.2);
+        }
+        .cover {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+            animation: spin 15s linear infinite;
+            animation-play-state: paused;
+        }
+        .cover.playing {
+            animation-play-state: running;
+        }
+        @keyframes spin {
+            100% { transform: rotate(360deg); }
+        }
+        .song-info { margin-top: 20px; }
+        .song-title { font-size: 22px; color: #31c27c; font-weight: bold; margin-bottom: 5px;}
+        .song-artist { color: #aaa; font-size: 16px;}
+
+        /* 右侧歌单 */
+        .right-panel {
+            flex: 1;
+            padding-left: 30px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .right-panel h2 { margin-top: 0; font-size: 18px; color: #ddd; border-bottom: 1px solid #444; padding-bottom: 10px;}
+        .song-item {
+            padding: 12px 15px;
+            border-radius: 8px;
+            margin-bottom: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            justify-content: space-between;
+        }
+        .song-item:hover {
+            background: #3a3a3a;
+        }
+        .song-item.active {
+            background: #31c27c;
+            color: #fff;
+            font-weight: bold;
+        }
+        .song-item .artist { font-size: 12px; opacity: 0.8; }
+
+        /* 底部控制区 */
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            right: 30px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        button {
+            padding: 10px 25px;
+            background: #31c27c;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        button:hover { background: #28a76a; }
+    </style>
+</head>
+<body>
+<div id="app" class="player">
+    <!-- 左侧播放区 -->
+    <div class="left-panel">
+        <div class="cover-container">
+            <img :src="currentSong.coverUrl || 'https://p1.music.126.net/6y-UleORITEDbvrOLV0Q8A==/5639395138885805.jpg'"
+                 class="cover" :class="{playing: isPlaying}">
+        </div>
+        <div class="song-info">
+            <div class="song-title">{{ currentSong.songName || '请选择歌曲' }}</div>
+            <div class="song-artist">{{ currentSong.artistName || '未知歌手' }}</div>
+        </div>
+    </div>
+
+    <!-- 右侧歌单区 -->
+    <div class="right-panel">
+        <h2>🎵 我的最爱歌单</h2>
+        <!-- 如果数据还没加载出来，显示提示 -->
+        <div v-if="songList.length === 0" style="color: #888; text-align: center; margin-top: 50px;">
+            正在加载数据或暂无歌曲...
+        </div>
+        <div v-for="song in songList" :key="song.songId"
+             class="song-item" :class="{active: currentSong.songId === song.songId}"
+             @click="playSong(song)">
+            <span>{{ song.songName }}</span>
+            <span class="artist">{{ song.artistName }}</span>
+        </div>
+    </div>
+
+    <!-- 隐藏的audio标签 -->
+    <audio ref="audioPlayer" @ended="nextSong"></audio>
+</div>
+
+<script>
+    const { createApp, ref, onMounted, computed } = Vue;
+
+    createApp({
+        setup() {
+            const songList = ref([]);
+            const currentSong = ref({});
+            const isPlaying = ref(false);
+            const audioPlayer = ref(null);
+
+            // 页面加载时，向后端请求歌单数据
+            onMounted(() => {
+                // 注意：这里使用的是相对路径，Spring Boot会自动识别
+                axios.get('/api/playlist/1')
+                    .then(res => {
+                        songList.value = res.data;
+                        // 自动选中第一首歌，但默认不播放
+                        if(songList.value.length > 0) {
+                            currentSong.value = songList.value[0];
+                        }
+                    })
+                    .catch(err => {
+                        console.error("请求后端失败:", err);
+                        alert("获取数据失败，请检查后端是否启动以及数据库配置！");
+                    });
+            });
+
+            // 点击播放
+            const playSong = (song) => {
+                currentSong.value = song;
+                isPlaying.value = true;
+                // 等待DOM更新后设置音频源并播放
+                setTimeout(() => {
+                    audioPlayer.value.src = song.audioUrl;
+                    audioPlayer.value.play().catch(e => console.log("播放被拦截或链接失效", e));
+                }, 50);
+            };
+
+            // 自动下一首 (简化版)
+            const nextSong = () => {
+                if(songList.value.length > 0) {
+                    let currentIndex = songList.value.findIndex(s => s.songId === currentSong.value.songId);
+                    let nextIndex = (currentIndex + 1) % songList.value.length;
+                    playSong(songList.value[nextIndex]);
+                }
+            };
+
+            return { songList, currentSong, isPlaying, playSong, nextSong, audioPlayer };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
